@@ -1,5 +1,7 @@
 # docker run -it -d --privileged --name cve --device /dev/kvm ubuntu:22.04
 
+# docker buildx build . -t linux_image
+
 #!/bin/bash
 #export KERNEL="/home/dong/kk/linux-5.10.11"
 #export IMAGE="/home/dong/kk/fuck_image"
