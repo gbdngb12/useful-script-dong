@@ -1,0 +1,68 @@
+# docker run -it -d --privileged --name cve --device /dev/kvm ubuntu:22.04
+
+#!/bin/bash
+#export KERNEL="/home/dong/kk/linux-5.10.11"
+#export IMAGE="/home/dong/kk/fuck_image"
+#qemu-system-x86_64 \
+#    -enable-kvm \
+#    -m 2G \
+#    -smp 2 \
+#    -kernel $KERNEL/arch/x86/boot/bzImage \
+#    -append "root=/dev/vda1 console=tty1 console=ttyS0 nokaslr earlyprintk=serial net.ifnames=0" \
+#    -drive if=virtio,format=qcow2,file=$IMAGE/ubuntu-22.04-minimal-cloudimg-amd64.img \
+#    -drive if=virtio,format=raw,file=$IMAGE/seed.raw \
+#    -net user,host=10.0.2.10,hostfwd=tcp:127.0.0.1:10021-:22 \
+#    -net nic,model=e1000 \
+#    -nographic
+
+FROM ubuntu:22.04
+RUN sed -i 's/archive.ubuntu.com/mirror.kakao.com/g' /etc/apt/sources.list
+RUN apt update && apt install -y zsh
+
+ARG DEBIAN_FRONTEND=noninteractive
+ENV TZ=Asia/Seoul
+RUN apt install -y tzdata
+RUN apt install wget bc libncurses-dev gawk flex bison openssl libssl-dev dkms libelf-dev libudev-dev libpci-dev libiberty-dev autoconf llvm gdb -y
+RUN apt install cloud-image-utils qemu-kvm libvirt-clients libvirt-daemon-system bridge-utils virtinst libvirt-daemon -y
+RUN libvirtd &
+RUN usermod -aG kvm root
+RUN usermod -aG libvirt root
+
+RUN mkdir /root/kernel_debug
+RUN mkdir /root/kernel_debug/image
+WORKDIR /root/kernel_debug/image
+RUN wget https://cloud-images.ubuntu.com/minimal/releases/jammy/release-20220420/ubuntu-22.04-minimal-cloudimg-amd64.img
+RUN qemu-img resize /root/kernel_debug/image/ubuntu-22.04-minimal-cloudimg-amd64.img +2G
+
+#RUN /bin/sh -c "(cat > /root/kernel_debug/image/cloud_config.yaml << EOF
+#cloud-config
+#password: ubuntu
+#ssh_pwauth: True
+#chpasswd:
+#  expire: false
+#EOF
+#)"
+
+RUN set -x \
+&& { \
+echo '#cloud-config'; \
+echo 'password: ubuntu'; \
+echo 'chpasswd:'; \
+echo '  expire: false'; \
+} > /root/kernel_debug/image/cloud_config.yaml \
+&& cat /root/kernel_debug/image/cloud_config.yaml
+
+
+RUN cloud-localds /root/kernel_debug/image/seed.raw /root/kernel_debug/image/cloud_config.yaml
+
+WORKDIR /root/kernel_debug
+RUN wget https://cdn.kernel.org/pub/linux/kernel/v5.x/linux-5.10.11.tar.gz
+RUN tar -xvf linux-5.10.11.tar.gz
+
+WORKDIR /root/kernel_debug/linux-5.10.11
+RUN make defconfig
+RUN make kvm_guest.config
+RUN make olddefconfig
+# patch for Linux Build objtool error
+RUN sed -i '/if (!symtab)/,+2s/return -1;/return 0;/' ./tools/objtool/elf.c
+RUN make -j `nproc`
