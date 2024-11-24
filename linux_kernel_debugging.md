@@ -1,8 +1,13 @@
+```bash
 make defconfig
 make kvm_guest.config
 make menuconfig # ENABLE Debugging info, gdb python script
 make -j `nproc`
+```
 
+`run.sh`
+
+```
 #!/bin/bash
 export KERNEL="/root/kernel_debug/linux-5.10.11"
 export IMAGE="/root/kernel_debug/image"
@@ -18,3 +23,11 @@ qemu-system-x86_64 \
 -net nic,model=e1000 \
 -nographic \
 -S -s
+```
+
+```
+gdb vmlinux
+(gdb) dir $linux_source_dir
+(gdb) source ./vmlinux-gdb.py
+(gdb) target remote :1234
+```
