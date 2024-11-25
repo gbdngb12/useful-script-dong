@@ -1,6 +1,6 @@
 # 목표
-## wayland, x11 windows switch 통합 in KDE
-## firefox tabs도 switch가능하도록(krunner 코드 참조)
+- [ ] wayland, x11 windows switch 통합 in KDE
+- [ ] firefox tabs도 switch가능하도록(krunner 코드 참조)
 # 1. Get windows list
 ```js
 try {
