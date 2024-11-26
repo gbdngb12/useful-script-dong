@@ -293,3 +293,106 @@ if __name__ == "__main__":
     else:
         print("No result returned.")
 ```
+
+## version 1
+```python
+import subprocess
+from datetime import datetime
+import os
+import hashlib
+from enum import Enum
+from typing import Optional, List
+import json
+
+class ScriptMode(Enum):
+    GET_WINDOW_LIST = 1
+    SET_WINDOW = 2
+    
+class KWinScriptManager:
+    def __init__(self):
+        self.script_folder_root = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~"))
+        self.script_folder = os.path.join(self.script_folder_root, ".wwscripts/")
+    
+    def _run_command(self, command:str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                command, capture_output=True, shell=True, text=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            print(f"Command failed: {command}")
+            print(f"Error output: {e.stderr}")
+            return None
+    
+    def _fetch_log(self, datetime_start):
+        since = str(datetime_start)
+        return json.loads('\n'.join([el.lstrip("js: ") for el in self._run_command("journalctl _COMM=kwin_wayland -o cat --since \"" + since + "\"").rstrip().split("\n")]))
+        
+    
+    def _generate_script(self, mode:ScriptMode, target_id: Optional[str]):
+        if mode == ScriptMode.GET_WINDOW_LIST:
+            return """
+            var clients = workspace.windowList();
+            var clientData = [];
+            clients.forEach(client => {
+                var name = client.caption;
+                if (name.length > 0) {
+                    clientData.push({
+                        desktops: client.desktops[0].x11DesktopNumber,
+                        icon: client.resourceClass,
+                        caption: client.caption,
+                        id: client.internalId
+                    });
+                }
+            });
+            console.log(JSON.stringify(clientData, null, 2));
+            """
+        elif mode == ScriptMode.SET_WINDOW:
+            if not target_id:
+                raise ValueError("Target caption must be set for SET_WINDOW mode.")
+            return f"""
+            var target_id = "{target_id}";
+            var clients = workspace.windowList();
+            for (const client of clients) {{
+                if (target_id == String(client.internalId)) {{
+                    workspace.activeWindow = client;
+                    break;
+                }}
+            }}
+            """
+        else:
+            raise ValueError("Invalid script mode.")
+    
+    def run_script(self, mode:ScriptMode, target_id:Optional[str]) -> Optional[List]:
+        datetime_now = datetime.now()
+        # 0. save Script
+        self.script_name = hashlib.md5(str(mode).encode()).hexdigest()
+        self.script_path = os.path.join(self.script_folder, self.script_name)
+        with open(self.script_path, 'w') as file:
+            file.write(self._generate_script(mode, target_id))
+        
+        # 1. load
+        result = self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.loadScript \"string:{self.script_path}\" \"string:{self.script_name}\"")
+        if not result:
+            raise Exception("SCRIPT INSTALL ERROR")
+        script_id = result.strip().split()[-1]
+        
+        # 2. run
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal \"/Scripting/Script{script_id}\" org.kde.kwin.Script.run")
+        # 3. stop
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal \"/Scripting/Script{script_id}\" org.kde.kwin.Script.stop")
+        # 4. uninstall
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.unloadScript \"string:{self.script_name}\"")
+        if mode == ScriptMode.GET_WINDOW_LIST:
+            return self._fetch_log(datetime_now)
+
+        # 5. remove Script
+        os.remove(self.script_path)
+    
+        
+
+manager = KWinScriptManager()
+target_id = "{adabc5cf-6d77-406d-be27-6ca8e6fd67fd}"
+print(manager.run_script(ScriptMode.SET_WINDOW ,target_id))
+
+```
