@@ -545,3 +545,159 @@ class Plugin(PluginInstance, TriggerQueryHandler):
                         ]
                     ))
 ```
+
+## albert version2
+
+```python
+# -*- coding: utf-8 -*-
+# Copyright (c) 2017-2014 Manuel Schneider
+
+from pathlib import Path
+import subprocess
+from datetime import datetime
+import os
+import hashlib
+from enum import Enum
+from typing import Optional, List
+import json
+
+
+from albert import *
+
+md_iid = '2.3'
+md_version = "1.6"
+md_name = "kde switcher"
+md_description = "kde switcher"
+md_license = "BSD-3"
+md_url = "dong"
+md_authors = "@gbdngb12"
+
+
+class ScriptMode(Enum):
+    GET_WINDOW_LIST = 1
+    SET_WINDOW = 2
+    
+class KWinScriptManager:
+    def __init__(self):
+        self.script_folder_root = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~"))
+        self.script_folder = os.path.join(self.script_folder_root, ".wwscripts/")
+    
+    def _run_command(self, command:str) -> Optional[str]:
+        try:
+            result = subprocess.run(
+                command, capture_output=True, shell=True, text=True
+            )
+            return result.stdout.strip()
+        except subprocess.CalledProcessError as e:
+            print(f"Command failed: {command}")
+            print(f"Error output: {e.stderr}")
+            return None
+    
+    def _fetch_log(self, datetime_start):
+        since = str(datetime_start)
+        return json.loads('\n'.join([el.lstrip("js: ") for el in self._run_command("journalctl _COMM=kwin_wayland -o cat --since \"" + since + "\"").rstrip().split("\n")]))
+        
+    
+    def _generate_script(self, mode:ScriptMode, target_id: Optional[str]):
+        if mode == ScriptMode.GET_WINDOW_LIST:
+            return """
+            var clients = workspace.windowList();
+            var clientData = [];
+            clients.forEach(client => {
+                var name = client.caption;
+                if (name.length > 0) {
+                    clientData.push({
+                        desktops: client.desktops[0].x11DesktopNumber,
+                        icon: client.resourceClass,
+                        caption: client.caption,
+                        id: client.internalId
+                    });
+                }
+            });
+            console.log(JSON.stringify(clientData, null, 2));
+            """
+        elif mode == ScriptMode.SET_WINDOW:
+            if not target_id:
+                raise ValueError("Target caption must be set for SET_WINDOW mode.")
+            return f"""
+            var target_id = "{target_id}";
+            var clients = workspace.windowList();
+            for (const client of clients) {{
+                if (target_id == String(client.internalId)) {{
+                    workspace.activeWindow = client;
+                    break;
+                }}
+            }}
+            """
+        else:
+            raise ValueError("Invalid script mode.")
+    
+    def run_script(self, mode:ScriptMode, target_id:Optional[str]) -> Optional[List]:
+        datetime_now = datetime.now()
+        # 0. save Script
+        self.script_name = hashlib.md5(str(mode).encode()).hexdigest()
+        self.script_path = os.path.join(self.script_folder, self.script_name)
+        print(f"target_id : {target_id}")
+        with open(self.script_path, 'w') as file:
+            file.write(self._generate_script(mode, target_id))
+        
+        # 1. load
+        result = self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.loadScript \"string:{self.script_path}\" \"string:{self.script_name}\"")
+        if not result:
+            raise Exception("SCRIPT INSTALL ERROR")
+        script_id = result.strip().split()[-1]
+        
+        # 2. run
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal \"/Scripting/Script{script_id}\" org.kde.kwin.Script.run")
+        # 3. stop
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal \"/Scripting/Script{script_id}\" org.kde.kwin.Script.stop")
+        # 4. uninstall
+        self._run_command(f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.unloadScript \"string:{self.script_name}\"")
+        if mode == ScriptMode.GET_WINDOW_LIST:
+            return self._fetch_log(datetime_now)
+        else:
+            print("i am set window")
+        # 5. remove Script
+        os.remove(self.script_path)
+
+class Plugin(PluginInstance, TriggerQueryHandler):
+
+    def __init__(self):
+        PluginInstance.__init__(self)
+        TriggerQueryHandler.__init__(
+            self, self.id, self.name, self.description,
+            defaultTrigger='s '
+        )
+        print("kde init")
+        self.iconUrls = [f"file:{Path(__file__).parent}/python.svg"]
+        self.manager = KWinScriptManager()
+
+    def handleTriggerQuery(self, query):
+        self.window_list = self.manager.run_script(ScriptMode.GET_WINDOW_LIST, None)
+        if self.window_list:
+            for window in self.window_list:
+                print(window)
+                
+                # query.string을 소문자로 변환하여 검색
+                search_term = query.string.lower()
+                
+                # caption 또는 desktops 값과 검색어가 일치하는지 확인
+                if search_term in (f"[{window['desktops']}] +{window['caption']}").lower():
+                    print(f"FOUND {window}")
+                    # window 값을 캡처하여 람다식에서 올바르게 참조
+                    current_window_id = window['id']
+                    query.add(StandardItem(
+                        id=self.id,
+                        text=f"[{window['desktops']}] {window['caption']}",
+                        subtext=f"Desktop {window['desktops']} {window['icon']}",
+                        inputActionText=query.trigger + window['caption'],
+                        iconUrls=[f"xdg:{window['icon']}", window['icon']],
+                        actions=[
+                            Action(
+                                "Switch Window",
+                                "Switch Window",
+                                lambda id=current_window_id: self.manager.run_script(ScriptMode.SET_WINDOW, id)
+                            )
+                        ]
+                    ))
+```
