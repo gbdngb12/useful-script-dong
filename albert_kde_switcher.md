@@ -701,3 +701,142 @@ class Plugin(PluginInstance, TriggerQueryHandler):
                         ]
                     ))
 ```
+
+
+
+```python
+import os
+import hashlib
+import subprocess
+from enum import Enum
+import json
+from datetime import datetime
+
+class ScriptMode(Enum):
+    GET_WINDOW_LIST = 1
+    SET_WINDOW = 2
+
+class KWinScriptManager:
+    def __init__(self):
+        self.script_folder_root = os.environ.get("XDG_CONFIG_HOME", os.path.expanduser("~"))
+        self.script_folder = os.path.join(self.script_folder_root, ".wwscripts/")
+        self.datetime_now = None
+
+    def _run_command(self, command, capture_output=True):
+        """Helper method to run a shell command."""
+        try:
+            print(f"command : {command}")
+            result = subprocess.run(
+                command, capture_output=capture_output, shell=True, text=True, check=True
+            )
+            return result.stdout.strip() if capture_output else None
+        except subprocess.CalledProcessError as e:
+            print(f"Command failed: {command}")
+            print(f"Error output: {e.stderr}")
+            return None
+
+    def _generate_script_content(self, mode: ScriptMode, target_id=None):
+        """Generate the script content based on the mode."""
+        if mode == ScriptMode.GET_WINDOW_LIST:
+            return """
+            var clients = workspace.windowList();
+            var clientData = [];
+            clients.forEach(client => {
+                var name = client.caption;
+                if (name.length > 0) {
+                    clientData.push({
+                        desktops: client.desktops[0].x11DesktopNumber,
+                        icon: client.resourceClass,
+                        caption: client.caption,
+                        id: client.internalId
+                    });
+                }
+            });
+            console.log(JSON.stringify(clientData, null, 2));
+            """
+        elif mode == ScriptMode.SET_WINDOW:
+            if not target_id:
+                raise ValueError("Target caption must be set for SET_WINDOW mode.")
+            return f"""
+            var target_id = "{target_id}";
+            var clients = workspace.windowList();
+            for (const client of clients) {{
+                if (target_id == String(client.internalId)) {{
+                    workspace.activeWindow = client;
+                    break;
+                }}
+            }}
+            """
+        else:
+            raise ValueError("Invalid script mode.")
+
+    def _generate_script_path(self, mode: ScriptMode, target_id=None):
+        """Ensure the script exists and return its path."""
+        script_content = self._generate_script_content(mode, target_id)
+        script_name = hashlib.md5((target_id or str(mode)).encode()).hexdigest()
+        script_path = os.path.join(self.script_folder, script_name)
+
+        if not os.path.isfile(script_path):
+            os.makedirs(self.script_folder, exist_ok=True)
+            with open(script_path, "w") as script_file:
+                script_file.write(script_content)
+
+        return script_path
+
+    def _fetch_logs(self):
+        """Fetch logs from KWin."""
+        command = f'journalctl _COMM=kwin_wayland -o cat --since "{self.datetime_now}"'
+        logs = self._run_command(command, True)
+        if logs:
+            log_output = logs.rstrip().split("\n")
+            log_output = [line.lstrip("js: ") for line in log_output]
+            return json.loads("\n".join(log_output))
+        return []
+
+    def run_script(self, mode: ScriptMode, target_id=None):
+        """Run the script with the KWin D-Bus interface."""
+        script_path = self._generate_script_path(mode, target_id)
+        script_name = f"ww{os.urandom(4).hex()}"
+        dbus_load = f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.loadScript string:{script_path} string:{script_name}"
+        dbus_run = f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting/Script{{ID}} org.kde.kwin.Script.run"
+        dbus_stop = f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting/Script{{ID}} org.kde.kwin.Script.stop"
+        dbus_unload = f"dbus-send --session --dest=org.kde.KWin --print-reply=literal /Scripting org.kde.kwin.Scripting.unloadScript string:{script_name}"
+
+        try:
+            self.datetime_now = datetime.now().isoformat()
+            result = self._run_command(dbus_load)
+            if not result:
+                print("Failed to load the script.")
+                return None
+
+            script_id = result.strip().split()[-1]
+            
+            self._run_command(dbus_run.format(ID=script_id))
+
+            self._run_command(dbus_stop.format(ID=script_id))
+            self._run_command(dbus_unload)
+
+            if mode == ScriptMode.GET_WINDOW_LIST:
+                return self._fetch_logs()
+            os.remove(script_path)
+        except Exception as e:
+            print(f"Error running script: {e}")
+            return None
+
+
+# Example usage
+if __name__ == "__main__":
+    target_id = "{6cc5c5fc-6998-4e5f-aeeb-dbadf702db11}"
+    manager = KWinScriptManager()
+
+    # Set a specific window
+    result = manager.run_script(ScriptMode.SET_WINDOW, target_id)
+
+    # Or, get the window list
+    # result = manager.run_script(ScriptMode.GET_WINDOW_LIST)
+
+    if result:
+        print(result)
+    else:
+        print("No result returned.")
+```
