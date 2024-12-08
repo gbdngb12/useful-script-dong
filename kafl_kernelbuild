@@ -1,0 +1,132 @@
+$ build dep
+sudo pacman -Sy bc bcio
+make defconfig
+make menuconfig # Enable btrfs
+
+$ zcat /proc/config.gz > .config
+
+./scripts/config --disable SYSTEM_TRUSTED_KEYS
+# disable kernel signature
+./scripts/config --disable SYSTEM_TRUSTED_KEYS
+./scripts/config --disable SYSTEM_REVOCATION_KEYS
+# compress debug info (otherwise might fail with 'no space left on device' on the runnner)
+./scripts/config --enable DEBUG_INFO_COMPRESSED
+# enable KVM
+./scripts/config --module CONFIG_KVM
+# enable Nyx
+./scripts/config --enable CONFIG_KVM_NYX
+# tweak locaversion
+./scripts/config --set-str CONFIG_LOCALVERSION -nyx
+# 여기서 btrfs도 활성화해야함(archlinux한정)
+# 나머지 전부 Default, hyperv만 n
+make `nproc`
+
+## FAiled
+[dong@archlinux ~/Downloads/kafl.linux]$ make -j `nproc`
+  SYNC    include/config/auto.conf
+*
+* Restart config...
+*
+*
+* Virtualization
+*
+Virtualization (VIRTUALIZATION) [Y/n/?] y
+  Kernel-based Virtual Machine (KVM) support (KVM) [M/n/y/?] m
+    KVM for Intel (and compatible) processors support (KVM_INTEL) [N/m/?] (NEW) m
+      KVM extension for NYX to enable advanced fuzzing features (such as Intel Processor Trace) (KVM_NYX) [Y/n/?] y
+    KVM for AMD processors support (KVM_AMD) [N/m/?] (NEW) m
+    System Management Mode emulation (KVM_SMM) [Y/n/?] (NEW) y
+    Support for Microsoft Hyper-V emulation (KVM_HYPERV) [Y/n/?] (NEW) y
+    Support for Xen hypercall interface (KVM_XEN) [N/y/?] (NEW) y
+  Maximum number of vCPUs per KVM guest (KVM_MAX_NR_VCPUS) [1024] (NEW) 
+*
+* Certificates for signature checking
+*
+Provide system-wide ring of trusted keys (SYSTEM_TRUSTED_KEYRING) [Y/?] y
+  Additional X.509 keys for default system keyring (SYSTEM_TRUSTED_KEYS) [] (NEW) 
+  Reserve area for inserting a certificate without recompiling (SYSTEM_EXTRA_CERTIFICATE) [N/y/?] n
+  Provide a keyring to which extra trustable keys may be added (SECONDARY_TRUSTED_KEYRING) [N/y/?] n
+Provide system-wide ring of blacklisted keys (SYSTEM_BLACKLIST_KEYRING) [N/y/?] n
+
+
+## Success
+
+
+[dong@archlinux ~/Downloads/kafl.linux]$ make -j `nproc`
+  SYNC    include/config/auto.conf
+*
+* Restart config...
+*
+*
+* Virtualization
+*
+Virtualization (VIRTUALIZATION) [Y/n/?] y
+  Kernel-based Virtual Machine (KVM) support (KVM) [M/n/y/?] m
+    KVM for Intel (and compatible) processors support (KVM_INTEL) [N/m/?] (NEW) m
+      KVM extension for NYX to enable advanced fuzzing features (such as Intel Processor Trace) (KVM_NYX) [Y/n/?] y
+    KVM for AMD processors support (KVM_AMD) [N/m/?] (NEW) m
+    System Management Mode emulation (KVM_SMM) [Y/n/?] (NEW) y
+    Support for Microsoft Hyper-V emulation (KVM_HYPERV) [Y/n/?] (NEW) n
+    Support for Xen hypercall interface (KVM_XEN) [N/y/?] (NEW) y
+  Maximum number of vCPUs per KVM guest (KVM_MAX_NR_VCPUS) [1024] (NEW) 
+*
+* Certificates for signature checking
+*
+Provide system-wide ring of trusted keys (SYSTEM_TRUSTED_KEYRING) [Y/?] y
+  Additional X.509 keys for default system keyring (SYSTEM_TRUSTED_KEYS) [] (NEW) 
+  Reserve area for inserting a certificate without recompiling (SYSTEM_EXTRA_CERTIFICATE) [N/y/?] n
+  Provide a keyring to which extra trustable keys may be added (SECONDARY_TRUSTED_KEYRING) [N/y/?] n
+Provide system-wide ring of blacklisted keys (SYSTEM_BLACKLIST_KEYRING) [N/y/?] n
+
+
+$ sudo make modules
+$ sudo make modules_install
+$ sudo make install
+
+$ sudo mkinitcpio -k 6.8.0-nyx-g0509b850d2bd -c /etc/mkinitcpio.conf -g /boot/initramfs-6.8.0-nyx-g0509b850d2bd.img
+[dong@archlinux ~/Downloads/kafl.linux]$ cp -v ./arch/x86_64/boot/bzImage /boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd
+'./arch/x86_64/boot/bzImage' -> '/boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd'
+cp: cannot create regular file '/boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd': Permission denied
+                                                                                                                
+[dong@archlinux ~/Downloads/kafl.linux]$ sudo cp -v ./arch/x86_64/boot/bzImage /boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd
+'./arch/x86_64/boot/bzImage' -> '/boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd'
+                                                                                                                
+[dong@archlinux ~/Downloads/kafl.linux]$ sudo mkinitcpio -k 6.8.0-nyx-g0509b850d2bd -g /boot/initramfs-linux-6.8.0-nyx-g0509b850d2bd.img
+==> Starting build: '6.8.0-nyx-g0509b850d2bd'
+  -> Running build hook: [base]
+  -> Running build hook: [udev]
+  -> Running build hook: [autodetect]
+  -> Running build hook: [microcode]
+  -> Running build hook: [modconf]
+  -> Running build hook: [kms]
+  -> Running build hook: [keyboard]
+==> WARNING: Possibly missing firmware for module: 'xhci_pci'
+  -> Running build hook: [keymap]
+  -> Running build hook: [consolefont]
+==> WARNING: consolefont: no font found in configuration
+  -> Running build hook: [block]
+  -> Running build hook: [filesystems]
+  -> Running build hook: [fsck]
+==> Generating module dependencies
+==> Creating zstd-compressed initcpio image: '/boot/initramfs-linux-6.8.0-nyx-g0509b850d2bd.img'
+  -> Early uncompressed CPIO image generation successful
+==> Initcpio image generation successful
+# 백업필수!                                                                   
+[dong@archlinux ~/Downloads/kafl.linux]$ sudo cp ./System.map /boot/System.map
+                                                                                                                
+[dong@archlinux ~/Downloads/kafl.linux]$ sudo grub-mkconfig -o /boot/grub/grub.cfg 
+Generating grub configuration file ...
+Found linux image: /boot/vmlinuz-linux-lts
+Found initrd image: /boot/intel-ucode.img /boot/initramfs-linux-lts.img
+Found fallback initrd image(s) in /boot:  intel-ucode.img initramfs-linux-lts-fallback.img
+Found linux image: /boot/vmlinuz-linux-6.8.0-nyx-g0509b850d2bd
+Found initrd image: /boot/intel-ucode.img /boot/initramfs-linux-6.8.0-nyx-g0509b850d2bd.img
+Found linux image: /boot/vmlinuz-linux
+Found initrd image: /boot/intel-ucode.img /boot/initramfs-linux.img
+Found fallback initrd image(s) in /boot:  intel-ucode.img initramfs-linux-fallback.img
+Warning: os-prober will be executed to detect other bootable partitions.
+Its output will be used to detect bootable binaries on them and create new boot entries.
+Found Ubuntu 22.04.5 LTS (22.04) on /dev/nvme1n1p2
+Adding boot menu entry for UEFI Firmware Settings ...
+done
+              
