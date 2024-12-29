@@ -1,5 +1,27 @@
 ```python
 # -*- coding: utf-8 -*-
+# Copyright (c) 2017-2014 Manuel Schneider
+
+from albert import *
+
+md_iid = '2.3'
+md_version = "1.6"
+md_name = "Plasma Intergration"
+md_description = "Plasma Intergration"
+md_license = "BSD-3"
+md_url = "https://github.com/"
+md_authors = "@dong"
+
+import io
+import sys
+from typing import List
+new_paths = ["/usr/lib/python3.13/site-packages", "/home/dong/.local/lib/python3.13/site-packages"]
+
+# 경로를 순회하며 sys.path에 추가
+for path in new_paths:
+    if path not in sys.path:
+        sys.path.append(path)
+
 
 import io
 import base64
@@ -46,6 +68,25 @@ class KRunnerResult:
         return (f"KRunnerResult(rid={self.rid}, text={self.text}, "
                 f"icon_url={'(BASE64 DATA URI)' if self.icon_url else None}, "
                 f"subtext={self.subtext}, urls={self.urls})")
+        
+def run_krunner_action(match_id: str, action_id: str = ""):
+    """
+    org.kde.krunner1.Run 메서드를 호출하여 KRunner의 특정 항목을 실행합니다.
+    
+    :param match_id: 실행할 대상의 ID (예: "33")
+    :param action_id: 실행할 동작의 ID (예: "open", 기본값은 빈 문자열로 기본 동작 실행)
+    """
+    try:
+        # DBus 세션 버스 연결
+        bus = dbus.SessionBus()
+        proxy = bus.get_object('org.kde.plasma.browser_integration', '/TabsRunner')
+        interface = dbus.Interface(proxy, 'org.kde.krunner1')
+
+        # Run 메서드 호출
+        interface.Run(match_id, action_id)
+        print(f"Run 호출 성공: match_id={match_id}, action_id={action_id}")
+    except dbus.exceptions.DBusException as e:
+        print(f"Run 호출 실패: {e}")
 
 def extract_icon_data(icon_data_tuple):
     """
@@ -76,7 +117,7 @@ def extract_icon_data(icon_data_tuple):
         print("이미지 생성 중 오류 발생:", e)
         return None
 
-def fetch_krunner_results(query="plasma"):
+def fetch_krunner_results(query:str)-> List[KRunnerResult]:
     """KRunner Match(query) 결과를 KRunnerResult 객체 리스트로 반환."""
     # D-Bus 세션 버스 연결
     bus = dbus.SessionBus()
@@ -146,14 +187,53 @@ def fetch_krunner_results(query="plasma"):
 
     return krunner_results
 
-def main():
-    results = fetch_krunner_results("plasma")
-    for r in results:
-        print(f"NEXT {r}")
 
-if __name__ == "__main__":
-    main()
+class Plugin(PluginInstance, TriggerQueryHandler):
 
-# qdbus6 --literal org.kde.plasma.browser_integration /TabsRunner org.kde.krunner1.Run "33" ""
+    def __init__(self):
+        PluginInstance.__init__(self)
+        TriggerQueryHandler.__init__(
+            self, self.id, self.name, self.description,
+            defaultTrigger='f '
+        )
+
+    def handleTriggerQuery(self, query):
+        stripped = query.string.strip()
+        if stripped:
+            print(f"current query : {stripped}")
+            result = fetch_krunner_results(stripped)
+            # print(f"ret : {result}")
+            for ret in result:
+                query.add(StandardItem(
+                    id=self.id,
+                    text=ret.text,
+                    subtext=ret.subtext,
+                    inputActionText=query.trigger + ret.text,
+                    iconUrls = [ret.icon_url],
+                    actions = [
+                        Action("Switch Firefox Tab & Window", "Switch Firefox Tab & Window", lambda id=ret.rid: run_krunner_action(id))
+                    ]
+                ))
+        
+        # stripped = query.string.strip()
+        # if stripped:
+        #     try:
+        #         result = eval(stripped)
+        #     except Exception as ex:
+        #         result = ex
+
+        #     result_str = str(result)
+
+        #     query.add(StandardItem(
+        #         id=self.id,
+        #         text=result_str,
+        #         subtext=type(result).__name__,
+        #         inputActionText=query.trigger + result_str,
+        #         iconUrls= [main()],
+        #         actions = [
+        #             Action("copy", "Copy result to clipboard", lambda r=result_str: setClipboardText(r)),
+        #             Action("exec", "Execute python code", lambda r=result_str: exec(stripped)),
+        #         ]
+        #     ))
 
 ```
